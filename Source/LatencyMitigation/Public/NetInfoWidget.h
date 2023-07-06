@@ -20,4 +20,10 @@ public:
 
 	UFUNCTION(BlueprintImplementableEvent, Category = "UpdateInfo")
 		void UpdateServerInfo(const FVector& serverPosition);
+
+	UFUNCTION(BlueprintImplementableEvent, Category = "UpdateInfo")
+		void UpdateAckedMoves(int64 numAcked);
+
+	UFUNCTION(BlueprintImplementableEvent, Category = "UpdateInfo")
+		void UpdateSentMoves(int64 numSent);
 };

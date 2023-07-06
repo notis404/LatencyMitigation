@@ -1,7 +1,8 @@
 #include "PlayerCharacter.h"
 
 // Sets default values
-APlayerCharacter::APlayerCharacter()
+APlayerCharacter::APlayerCharacter() :
+	savedMoves{}
 {
 	// Set this pawn to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
 	PrimaryActorTick.bCanEverTick = true;
@@ -86,9 +87,15 @@ void APlayerCharacter::Tick(float DeltaTime)
 			}
 			currentMove.playerRotation = GetActorRotation().Yaw;
 			currentMove.lookAtRotation = PlayerCamera->GetRelativeRotation().Pitch;
+			currentMove.moveID = nextMoveId++;
 			ServerMove(currentMove);
+			ApplyMovement(currentMove);
+			savedMoves.push(currentMove);
 
-			
+			if (widget)
+			{
+				widget->UpdateSentMoves(currentMove.moveID);
+			}
 		}
 		//// Get the player controller
 		//APlayerController* PlayerController = Cast<APlayerController>(GetController());
@@ -169,23 +176,28 @@ void APlayerCharacter::GetNetworkEmulationSettings()
 }
 
 
-void APlayerCharacter::OnRep_PawnLocation()
-{
-	if (GetLocalRole() == ROLE_AutonomousProxy)
-	{
-		SetActorLocation(PawnLocation);
-		UNetInfoWidget* widget = Cast<UNetInfoWidget>(NetworkInfoWidgetComponent->GetWidget());
-		if (widget)
-		{
-			widget->UpdateServerInfo(GetActorLocation());
-		}
-	}
-}
-
 void APlayerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
-	DOREPLIFETIME_CONDITION(APlayerCharacter, PawnLocation, COND_OwnerOnly);
+}
+
+void APlayerCharacter::ApplyMovement(const FPlayerMove& move)
+{
+	SetActorRotation(FRotator{ 0.f, move.playerRotation, 0.f });
+
+	FVector NewLocation = GetActorLocation();
+	if (move.forwardAxis != 0.f)
+	{
+		FVector ForwardVector = GetActorForwardVector();
+		NewLocation += (ForwardVector * MovementSpeed * move.forwardAxis);
+	}
+
+	if (move.rightAxis != 0.f)
+	{
+		FVector RightVector = GetActorRightVector();
+		NewLocation += (RightVector * MovementSpeed * move.rightAxis);
+	}
+	SetActorLocation(NewLocation);
 }
 
 
@@ -226,21 +238,38 @@ bool APlayerCharacter::ServerMove_Validate(FPlayerMove input)
 
 void APlayerCharacter::ServerMove_Implementation(FPlayerMove input)
 {
-	SetActorRotation(FRotator{ 0.f, input.playerRotation, 0.f });
-	PlayerCamera->SetRelativeRotation(FRotator{input.lookAtRotation, 0.f, 0.f});
+	ApplyMovement(input);
 
-	FVector NewLocation = GetActorLocation();
-	if (input.forwardAxis != 0.f)
+	FServerAck ack;
+	ack.moveID = input.moveID;
+	ack.playerLocation = GetActorLocation();
+	ReconcileMove(ack);
+}
+
+void APlayerCharacter::ReconcileMove_Implementation(FServerAck ack)
+{
+	uint32 ackedID = 0;
+	while (ack.moveID != ackedID)
 	{
-		FVector ForwardVector = GetActorForwardVector();
-		NewLocation += (ForwardVector * MovementSpeed * input.forwardAxis);
+		ackedID = savedMoves.front().moveID;
+		savedMoves.pop();
 	}
 
-	if (input.rightAxis != 0.f)
+	SetActorLocation(ack.playerLocation);
+	float cachedLookAt = GetActorRotation().Yaw;
+
+	std::queue<FPlayerMove> tempQueue {savedMoves};	
+	while (!tempQueue.empty())
 	{
-		FVector RightVector = GetActorRightVector();
-		NewLocation += (RightVector * MovementSpeed * input.rightAxis);
+		ApplyMovement(tempQueue.front());
+		tempQueue.pop();
 	}
-	SetActorLocation(NewLocation);
-	PawnLocation = NewLocation;
+	SetActorRotation(FRotator{ 0.f, cachedLookAt, 0.f });
+
+	UNetInfoWidget* widget = Cast<UNetInfoWidget>(NetworkInfoWidgetComponent->GetWidget());
+	if (widget)
+	{
+		widget->UpdateServerInfo(ack.playerLocation);
+		widget->UpdateAckedMoves(ack.moveID);
+	}
 }

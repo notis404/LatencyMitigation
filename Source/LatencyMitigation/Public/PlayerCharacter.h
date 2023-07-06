@@ -13,11 +13,15 @@
 #include "NetInfoWidget.h"
 #include "Engine/NetConnection.h"
 #include "UMG/Public/UMG.h"
+#include <queue>
 #include "PlayerCharacter.generated.h"
 USTRUCT()
 struct FPlayerMove
 {
 	GENERATED_BODY()
+
+	UPROPERTY();
+	uint32 moveID = 0;
 
 	UPROPERTY();
 	float forwardAxis = 0.f;
@@ -30,6 +34,18 @@ struct FPlayerMove
 	
 	UPROPERTY();
 	float lookAtRotation = 0.f;
+};
+
+USTRUCT()
+struct FServerAck
+{
+	GENERATED_BODY();
+
+	UPROPERTY();
+	uint32 moveID = 0;
+
+	UPROPERTY();
+	FVector playerLocation{};
 };
 
 UCLASS()
@@ -61,8 +77,13 @@ public:
 	UFUNCTION(Server, WithValidation, Reliable)
 		void ServerMove(FPlayerMove input);
 
+	UFUNCTION(Client, Reliable)
+		void ReconcileMove(FServerAck ack);
+	
 	virtual bool ServerMove_Validate(FPlayerMove input);
 	virtual void ServerMove_Implementation(FPlayerMove input);
+
+	virtual void ReconcileMove_Implementation(FServerAck ack);
 
 	UPROPERTY(EditAnywhere)
 		APawn* blockToMove;
@@ -85,17 +106,20 @@ public:
 		UWidgetComponent* NetworkInfoWidgetComponent;
 private:
 
-	UPROPERTY(VisibleAnywhere, ReplicatedUsing = OnRep_PawnLocation)
-		FVector PawnLocation;
+	/*UPROPERTY(VisibleAnywhere, ReplicatedUsing = OnRep_PawnLocation)
+		FVector PawnLocation;*/
 
-	UFUNCTION()
-		void OnRep_PawnLocation();
+	/*UFUNCTION()
+		void OnRep_PawnLocation();*/
 
 	 void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
-
+	 void ApplyMovement(const FPlayerMove& move);
 	bool bMoveOnForwardAxis = false;
 	bool bMoveOnRightAxis = false;
 	bool bMovementToSend = false;
 	float forwardAxis = 0.f;
 	float rightAxis = 0.f;
+
+	uint32 nextMoveId = 1;
+	std::queue<FPlayerMove> savedMoves;
 };
