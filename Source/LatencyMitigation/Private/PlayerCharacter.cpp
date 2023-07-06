@@ -26,13 +26,32 @@ APlayerCharacter::APlayerCharacter()
 	Collider->SetupAttachment(RootComponent);
 	Collider->SetCapsuleSize(25.0f, 50.0f);
 	Collider->SetRelativeLocation(FVector(0.f, 0.f, 50.0f));
+
+	NetworkInfoWidgetComponent = CreateDefaultSubobject<UWidgetComponent>("NetInfoWidget");
+	static ConstructorHelpers::FClassFinder<UNetInfoWidget> netInfoWidgetObj(TEXT("/Game/Blueprints/NetworkInfo"));
+	if (netInfoWidgetObj.Succeeded())
+	{
+		NetworkInfoWidgetComponent->SetWidgetClass(netInfoWidgetObj.Class);
+	}
+	NetworkInfoWidgetComponent->SetupAttachment(RootComponent);
+	NetworkInfoWidgetComponent->SetWidgetSpace(EWidgetSpace::World);
+	NetworkInfoWidgetComponent->SetVisibility(true);
+
+	SetReplicates(true);
+	SetReplicateMovement(true);
 }
 
 // Called when the game starts or when spawned
 void APlayerCharacter::BeginPlay()
 {
 	Super::BeginPlay();
-
+	NetworkInfoWidgetComponent->GetWidget()->AddToViewport();
+	UNetInfoWidget* widget = Cast<UNetInfoWidget>(NetworkInfoWidgetComponent->GetWidget());
+	if (widget)
+	{
+		widget->UpdateClientInfo(GetActorLocation());
+	}
+	GetNetworkEmulationSettings();
 }
 
 // Called every frame
@@ -40,6 +59,75 @@ void APlayerCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
+	if (GetLocalRole() == ROLE_AutonomousProxy)
+	{
+		UNetInfoWidget* widget = Cast<UNetInfoWidget>(NetworkInfoWidgetComponent->GetWidget());
+		if (widget)
+		{
+			widget->UpdateClientInfo(GetActorLocation());
+		}
+
+		if (bMovementToSend)
+		{
+			bMovementToSend = false;
+			FPlayerMove currentMove{};
+			if (bMoveOnForwardAxis)
+			{
+				currentMove.forwardAxis = forwardAxis;
+				bMoveOnForwardAxis = false;
+				forwardAxis = 0.f;
+			}
+
+			if (bMoveOnRightAxis)
+			{
+				currentMove.rightAxis = rightAxis;
+				bMoveOnRightAxis = false;
+				rightAxis = 0.f;
+			}
+			currentMove.playerRotation = GetActorRotation().Yaw;
+			currentMove.lookAtRotation = PlayerCamera->GetRelativeRotation().Pitch;
+			ServerMove(currentMove);
+
+			
+		}
+		//// Get the player controller
+		//APlayerController* PlayerController = Cast<APlayerController>(GetController());
+
+
+		//// Get the camera location and rotation
+		//FVector CameraLocation;
+		//FRotator CameraRotation;
+		//PlayerController->GetPlayerViewPoint(CameraLocation, CameraRotation);
+
+		//// Calculate the text location in front of the camera
+		//FVector TextLocation = CameraLocation + CameraRotation.Vector() * 300.0f; // Adjust the distance as needed
+
+		//// Convert the location to a string
+		//FString LocationString = GetActorLocation().ToString();
+
+		//// Draw the debug string in front of the camera
+		//DrawDebugString(GetWorld(), TextLocation, TEXT("Client Position: ") + LocationString, nullptr, FColor::Green, 0.0f, true);
+	}
+	else if (GetLocalRole() == ROLE_Authority)
+	{
+		//// Get the player controller
+		//APlayerController* PlayerController = Cast<APlayerController>(GetController());
+
+
+		//// Get the camera location and rotation
+		//FVector CameraLocation;
+		//FRotator CameraRotation;
+		//PlayerController->GetPlayerViewPoint(CameraLocation, CameraRotation);
+
+		//// Calculate the text location in front of the camera
+		//FVector TextLocation = CameraLocation + CameraRotation.Vector() * 300.0f; // Adjust the distance as needed
+
+		//// Convert the location to a string
+		//FString LocationString = GetActorLocation().ToString();
+
+		//// Draw the debug string in front of the camera
+		//DrawDebugString(GetWorld(), TextLocation, TEXT("Server Position: ") + LocationString, nullptr, FColor::Red, 0.0f, true);
+	}
 }
 
 // Called to bind functionality to input
@@ -53,19 +141,72 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 	PlayerInputComponent->BindAxis("LookUp", this, &APlayerCharacter::LookUp);
 }
 
+void APlayerCharacter::GetNetworkEmulationSettings()
+{
+	APlayerController* PlayerController = Cast<APlayerController>(GetController());
+
+	if (PlayerController)
+	{
+		UNetConnection* NetConnection = PlayerController->GetNetConnection();
+		if (NetConnection)
+		{
+			const FPacketSimulationSettings SimulationSettings = NetConnection->PacketSimulationSettings;
+			UE_LOG(LogTemp, Warning, TEXT("Packet Lag: %d"), SimulationSettings.PktLag);
+			UE_LOG(LogTemp, Warning, TEXT("PktLagVariance: %d"), SimulationSettings.PktLagVariance);
+			UE_LOG(LogTemp, Warning, TEXT("PktLagMax: %d"), SimulationSettings.PktLagMax);
+			UE_LOG(LogTemp, Warning, TEXT("PktLagMin: %d"), SimulationSettings.PktLagMin);
+			UE_LOG(LogTemp, Warning, TEXT("Packet Loss: %d"), SimulationSettings.PktLoss);
+			UE_LOG(LogTemp, Warning, TEXT("PktLossMaxSize: %d"), SimulationSettings.PktLossMaxSize);
+			UE_LOG(LogTemp, Warning, TEXT("PktLossMinSize: %d"), SimulationSettings.PktLossMinSize);
+			UE_LOG(LogTemp, Warning, TEXT("Packet Incoming Loss: %d"), SimulationSettings.PktIncomingLoss);
+			UE_LOG(LogTemp, Warning, TEXT("PktIncomingLagMax: %d"), SimulationSettings.PktIncomingLagMax);
+			UE_LOG(LogTemp, Warning, TEXT("PktIncomingLagMin: %d"), SimulationSettings.PktIncomingLagMin);
+			UE_LOG(LogTemp, Warning, TEXT("Duplicate Packets: %d"), SimulationSettings.PktDup);
+			UE_LOG(LogTemp, Warning, TEXT("PktJitter: %d"), SimulationSettings.PktJitter);
+			UE_LOG(LogTemp, Warning, TEXT("PktOrder: %d"), SimulationSettings.PktOrder);
+		}
+	}
+}
+
+
+void APlayerCharacter::OnRep_PawnLocation()
+{
+	if (GetLocalRole() == ROLE_AutonomousProxy)
+	{
+		SetActorLocation(PawnLocation);
+		UNetInfoWidget* widget = Cast<UNetInfoWidget>(NetworkInfoWidgetComponent->GetWidget());
+		if (widget)
+		{
+			widget->UpdateServerInfo(GetActorLocation());
+		}
+	}
+}
+
+void APlayerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	DOREPLIFETIME_CONDITION(APlayerCharacter, PawnLocation, COND_OwnerOnly);
+}
+
 
 void APlayerCharacter::MoveForward(float Axis)
 {
-	FVector ForwardVector = GetActorForwardVector();
-	FVector NewLocation = GetActorLocation() + (ForwardVector * MovementSpeed * Axis);
-	SetActorLocation(NewLocation);
+	if (Axis != 0.f)
+	{
+		bMovementToSend = true;
+		bMoveOnForwardAxis = true;
+		forwardAxis = Axis;
+	}
 }
 
 void APlayerCharacter::MoveRight(float Axis)
 {
-	FVector RightVector = GetActorRightVector();
-	FVector NewLocation = GetActorLocation() + (RightVector * MovementSpeed * Axis);
-	SetActorLocation(NewLocation);
+	if (Axis != 0.f)
+	{
+		bMovementToSend = true;
+		bMoveOnRightAxis = true;
+		rightAxis = Axis;
+	}
 }
 
 void APlayerCharacter::Turn(float Axis)
@@ -75,6 +216,31 @@ void APlayerCharacter::Turn(float Axis)
 
 void APlayerCharacter::LookUp(float Axis)
 {
-	/*GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Red, FString::Printf(TEXT("Axis: %f"), Axis));*/
 	PlayerCamera->AddLocalRotation(FRotator{ TurnSpeed * Axis, 0.f, 0.f });
+}
+
+bool APlayerCharacter::ServerMove_Validate(FPlayerMove input)
+{
+	return true;
+}
+
+void APlayerCharacter::ServerMove_Implementation(FPlayerMove input)
+{
+	SetActorRotation(FRotator{ 0.f, input.playerRotation, 0.f });
+	PlayerCamera->SetRelativeRotation(FRotator{input.lookAtRotation, 0.f, 0.f});
+
+	FVector NewLocation = GetActorLocation();
+	if (input.forwardAxis != 0.f)
+	{
+		FVector ForwardVector = GetActorForwardVector();
+		NewLocation += (ForwardVector * MovementSpeed * input.forwardAxis);
+	}
+
+	if (input.rightAxis != 0.f)
+	{
+		FVector RightVector = GetActorRightVector();
+		NewLocation += (RightVector * MovementSpeed * input.rightAxis);
+	}
+	SetActorLocation(NewLocation);
+	PawnLocation = NewLocation;
 }

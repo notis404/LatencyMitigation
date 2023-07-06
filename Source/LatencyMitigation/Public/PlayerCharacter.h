@@ -6,13 +6,36 @@
 #include "GameFramework/Pawn.h"
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/WidgetComponent.h"
+#include "Kismet/GameplayStatics.h"
+#include "NetworkedPlayerController.h"
+#include "Net/UnrealNetwork.h"
+#include "NetInfoWidget.h"
+#include "Engine/NetConnection.h"
+#include "UMG/Public/UMG.h"
 #include "PlayerCharacter.generated.h"
+USTRUCT()
+struct FPlayerMove
+{
+	GENERATED_BODY()
+
+	UPROPERTY();
+	float forwardAxis = 0.f;
+	
+	UPROPERTY();
+	float rightAxis = 0.f;
+	
+	UPROPERTY();
+	float playerRotation = 0.f;
+	
+	UPROPERTY();
+	float lookAtRotation = 0.f;
+};
 
 UCLASS()
 class APlayerCharacter : public APawn
 {
 	GENERATED_BODY()
-
 public:
 	// Sets default values for this pawn's properties
 	APlayerCharacter();
@@ -33,6 +56,17 @@ public:
 	void Turn(float Axis);
 	void LookUp(float Axis);
 
+	void GetNetworkEmulationSettings();
+
+	UFUNCTION(Server, WithValidation, Reliable)
+		void ServerMove(FPlayerMove input);
+
+	virtual bool ServerMove_Validate(FPlayerMove input);
+	virtual void ServerMove_Implementation(FPlayerMove input);
+
+	UPROPERTY(EditAnywhere)
+		APawn* blockToMove;
+
 	UPROPERTY(EditAnywhere, Category = "Movement")
 		float MovementSpeed = 5.0f;
 	UPROPERTY(EditAnywhere, Category = "Movement")
@@ -47,5 +81,21 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Collision")
 		UCapsuleComponent* Collider;
 
+	UPROPERTY(EditAnywhere)
+		UWidgetComponent* NetworkInfoWidgetComponent;
+private:
 
+	UPROPERTY(VisibleAnywhere, ReplicatedUsing = OnRep_PawnLocation)
+		FVector PawnLocation;
+
+	UFUNCTION()
+		void OnRep_PawnLocation();
+
+	 void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
+	bool bMoveOnForwardAxis = false;
+	bool bMoveOnRightAxis = false;
+	bool bMovementToSend = false;
+	float forwardAxis = 0.f;
+	float rightAxis = 0.f;
 };
