@@ -38,8 +38,8 @@ APlayerCharacter::APlayerCharacter() :
 	NetworkInfoWidgetComponent->SetWidgetSpace(EWidgetSpace::World);
 	NetworkInfoWidgetComponent->SetVisibility(true);
 
-	SetReplicates(true);
-	SetReplicateMovement(true);
+	SetReplicates(false);
+	SetReplicateMovement(false);
 }
 
 // Called when the game starts or when spawned
@@ -97,43 +97,9 @@ void APlayerCharacter::Tick(float DeltaTime)
 				widget->UpdateSentMoves(currentMove.moveID);
 			}
 		}
-		//// Get the player controller
-		//APlayerController* PlayerController = Cast<APlayerController>(GetController());
-
-
-		//// Get the camera location and rotation
-		//FVector CameraLocation;
-		//FRotator CameraRotation;
-		//PlayerController->GetPlayerViewPoint(CameraLocation, CameraRotation);
-
-		//// Calculate the text location in front of the camera
-		//FVector TextLocation = CameraLocation + CameraRotation.Vector() * 300.0f; // Adjust the distance as needed
-
-		//// Convert the location to a string
-		//FString LocationString = GetActorLocation().ToString();
-
-		//// Draw the debug string in front of the camera
-		//DrawDebugString(GetWorld(), TextLocation, TEXT("Client Position: ") + LocationString, nullptr, FColor::Green, 0.0f, true);
 	}
 	else if (GetLocalRole() == ROLE_Authority)
 	{
-		//// Get the player controller
-		//APlayerController* PlayerController = Cast<APlayerController>(GetController());
-
-
-		//// Get the camera location and rotation
-		//FVector CameraLocation;
-		//FRotator CameraRotation;
-		//PlayerController->GetPlayerViewPoint(CameraLocation, CameraRotation);
-
-		//// Calculate the text location in front of the camera
-		//FVector TextLocation = CameraLocation + CameraRotation.Vector() * 300.0f; // Adjust the distance as needed
-
-		//// Convert the location to a string
-		//FString LocationString = GetActorLocation().ToString();
-
-		//// Draw the debug string in front of the camera
-		//DrawDebugString(GetWorld(), TextLocation, TEXT("Server Position: ") + LocationString, nullptr, FColor::Red, 0.0f, true);
 	}
 }
 
@@ -243,33 +209,42 @@ void APlayerCharacter::ServerMove_Implementation(FPlayerMove input)
 	FServerAck ack;
 	ack.moveID = input.moveID;
 	ack.playerLocation = GetActorLocation();
-	ReconcileMove(ack);
+	MulticastReconcileMove(ack);
 }
 
-void APlayerCharacter::ReconcileMove_Implementation(FServerAck ack)
+void APlayerCharacter::MulticastReconcileMove_Implementation(FServerAck ack)
 {
-	uint32 ackedID = 0;
-	while (ack.moveID != ackedID)
+	auto role = GetLocalRole();
+	if (role == ROLE_AutonomousProxy)
 	{
-		ackedID = savedMoves.front().moveID;
-		savedMoves.pop();
+		uint32 ackedID = 0;
+		while (ack.moveID != ackedID)
+		{
+			ackedID = savedMoves.front().moveID;
+			savedMoves.pop();
+		}
+
+		SetActorLocation(ack.playerLocation);
+		float cachedLookAt = GetActorRotation().Yaw;
+
+		std::queue<FPlayerMove> tempQueue {savedMoves};
+		while (!tempQueue.empty())
+		{
+			ApplyMovement(tempQueue.front());
+			tempQueue.pop();
+		}
+		SetActorRotation(FRotator{ 0.f, cachedLookAt, 0.f });
+
+		UNetInfoWidget* widget = Cast<UNetInfoWidget>(NetworkInfoWidgetComponent->GetWidget());
+		if (widget)
+		{
+			widget->UpdateServerInfo(ack.playerLocation);
+			widget->UpdateAckedMoves(ack.moveID);
+		}
+	}
+	else if (role == ROLE_SimulatedProxy)
+	{
+		SetActorLocation(ack.playerLocation);
 	}
 
-	SetActorLocation(ack.playerLocation);
-	float cachedLookAt = GetActorRotation().Yaw;
-
-	std::queue<FPlayerMove> tempQueue {savedMoves};	
-	while (!tempQueue.empty())
-	{
-		ApplyMovement(tempQueue.front());
-		tempQueue.pop();
-	}
-	SetActorRotation(FRotator{ 0.f, cachedLookAt, 0.f });
-
-	UNetInfoWidget* widget = Cast<UNetInfoWidget>(NetworkInfoWidgetComponent->GetWidget());
-	if (widget)
-	{
-		widget->UpdateServerInfo(ack.playerLocation);
-		widget->UpdateAckedMoves(ack.moveID);
-	}
 }

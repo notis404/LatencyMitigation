@@ -77,13 +77,13 @@ public:
 	UFUNCTION(Server, WithValidation, Reliable)
 		void ServerMove(FPlayerMove input);
 
-	UFUNCTION(Client, Reliable)
-		void ReconcileMove(FServerAck ack);
+	UFUNCTION(NetMulticast, Reliable)
+		void MulticastReconcileMove(FServerAck ack);
 	
 	virtual bool ServerMove_Validate(FPlayerMove input);
 	virtual void ServerMove_Implementation(FPlayerMove input);
 
-	virtual void ReconcileMove_Implementation(FServerAck ack);
+	virtual void MulticastReconcileMove_Implementation(FServerAck ack);
 
 	UPROPERTY(EditAnywhere)
 		APawn* blockToMove;
@@ -105,15 +105,8 @@ public:
 	UPROPERTY(EditAnywhere)
 		UWidgetComponent* NetworkInfoWidgetComponent;
 private:
-
-	/*UPROPERTY(VisibleAnywhere, ReplicatedUsing = OnRep_PawnLocation)
-		FVector PawnLocation;*/
-
-	/*UFUNCTION()
-		void OnRep_PawnLocation();*/
-
-	 void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
-	 void ApplyMovement(const FPlayerMove& move);
+	void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+	void ApplyMovement(const FPlayerMove& move);
 	bool bMoveOnForwardAxis = false;
 	bool bMoveOnRightAxis = false;
 	bool bMovementToSend = false;
