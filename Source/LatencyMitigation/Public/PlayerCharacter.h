@@ -79,19 +79,23 @@ public:
 
 	UFUNCTION(NetMulticast, Reliable)
 		void MulticastReconcileMove(FServerAck ack);
+
+	UFUNCTION()
+		void OnRep_PlayerColor();
 	
 	virtual bool ServerMove_Validate(FPlayerMove input);
 	virtual void ServerMove_Implementation(FPlayerMove input);
 
 	virtual void MulticastReconcileMove_Implementation(FServerAck ack);
 
-	UPROPERTY(EditAnywhere)
-		APawn* blockToMove;
+	void SetPlayerColor(const FLinearColor& newColor);
 
 	UPROPERTY(EditAnywhere, Category = "Movement")
 		float MovementSpeed = 5.0f;
 	UPROPERTY(EditAnywhere, Category = "Movement")
 		float TurnSpeed = 1.0f;
+	UPROPERTY(ReplicatedUsing = OnRep_PlayerColor)
+		FLinearColor PlayerColor = FLinearColor::Red;
 
 	UPROPERTY(EditAnywhere)
 		UStaticMeshComponent* PlayerMesh;

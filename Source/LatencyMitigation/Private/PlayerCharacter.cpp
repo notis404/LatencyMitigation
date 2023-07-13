@@ -17,6 +17,7 @@ APlayerCharacter::APlayerCharacter() :
 	if (StaticMeshAsset.Succeeded())
 	{
 		PlayerMesh->SetStaticMesh(StaticMeshAsset.Object);
+		PlayerMesh->SetMobility(EComponentMobility::Movable);
 	}
 
 	PlayerCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("PlayerCamera"));
@@ -38,7 +39,7 @@ APlayerCharacter::APlayerCharacter() :
 	NetworkInfoWidgetComponent->SetWidgetSpace(EWidgetSpace::World);
 	NetworkInfoWidgetComponent->SetVisibility(true);
 
-	SetReplicates(false);
+	SetReplicates(true);
 	SetReplicateMovement(false);
 }
 
@@ -46,13 +47,16 @@ APlayerCharacter::APlayerCharacter() :
 void APlayerCharacter::BeginPlay()
 {
 	Super::BeginPlay();
-	NetworkInfoWidgetComponent->GetWidget()->AddToViewport();
-	UNetInfoWidget* widget = Cast<UNetInfoWidget>(NetworkInfoWidgetComponent->GetWidget());
-	if (widget)
+	if (GetLocalRole() == ROLE_AutonomousProxy)
 	{
-		widget->UpdateClientInfo(GetActorLocation());
+		NetworkInfoWidgetComponent->GetWidget()->AddToViewport();
+		UNetInfoWidget* widget = Cast<UNetInfoWidget>(NetworkInfoWidgetComponent->GetWidget());
+		if (widget)
+		{
+			widget->UpdateClientInfo(GetActorLocation());
+		}
+		GetNetworkEmulationSettings();
 	}
-	GetNetworkEmulationSettings();
 }
 
 // Called every frame
@@ -145,6 +149,8 @@ void APlayerCharacter::GetNetworkEmulationSettings()
 void APlayerCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(APlayerCharacter, PlayerColor);
 }
 
 void APlayerCharacter::ApplyMovement(const FPlayerMove& move)
@@ -197,6 +203,16 @@ void APlayerCharacter::LookUp(float Axis)
 	PlayerCamera->AddLocalRotation(FRotator{ TurnSpeed * Axis, 0.f, 0.f });
 }
 
+void APlayerCharacter::OnRep_PlayerColor()
+{
+	auto oldMaterial = PlayerMesh->GetMaterial(0);
+	
+	UMaterialInstanceDynamic* newMaterialInstance = UMaterialInstanceDynamic::Create(oldMaterial, nullptr);
+	newMaterialInstance->SetVectorParameterValue(FName("Color"), PlayerColor);
+
+	PlayerMesh->SetMaterial(0, newMaterialInstance);
+}
+
 bool APlayerCharacter::ServerMove_Validate(FPlayerMove input)
 {
 	return true;
@@ -247,4 +263,9 @@ void APlayerCharacter::MulticastReconcileMove_Implementation(FServerAck ack)
 		SetActorLocation(ack.playerLocation);
 	}
 
+}
+
+void APlayerCharacter::SetPlayerColor(const FLinearColor& newColor)
+{
+	PlayerColor = newColor;
 }
