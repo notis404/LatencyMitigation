@@ -46,6 +46,15 @@ struct FServerAck
 
 	UPROPERTY();
 	FVector playerLocation{};
+	
+	UPROPERTY();
+	float playerRotation = 0.f;
+
+	UPROPERTY();
+	float playerForwardSpeed = 0.f;
+	
+	UPROPERTY();
+	float playerRightSpeed = 0.f;
 };
 
 UCLASS()
@@ -74,10 +83,10 @@ public:
 
 	void GetNetworkEmulationSettings();
 
-	UFUNCTION(Server, WithValidation, Reliable)
+	UFUNCTION(Server, WithValidation, Unreliable)
 		void ServerMove(FPlayerMove input);
 
-	UFUNCTION(NetMulticast, Reliable)
+	UFUNCTION(NetMulticast, Unreliable)
 		void MulticastReconcileMove(FServerAck ack);
 
 	UFUNCTION()
@@ -117,6 +126,16 @@ private:
 	float forwardAxis = 0.f;
 	float rightAxis = 0.f;
 
+	float simulatedRotation = 0.f;
+	float simulatedForwardSpeed = 0.f;
+	float simulatedRightSpeed = 0.f;
+	bool simulateMovement = false;
+	float simulatedUpdateCounter = 0.f;
+
 	uint32 nextMoveId = 1;
-	std::queue<FPlayerMove> savedMoves;
+	
+	std::queue<FPlayerMove> serverMovesToApply;
+	std::queue<FPlayerMove> nonAckedMoves;
+
+	float serverUpdateCounter = 0.f;
 };

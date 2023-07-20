@@ -2,7 +2,8 @@
 
 // Sets default values
 APlayerCharacter::APlayerCharacter() :
-	savedMoves{}
+	serverMovesToApply{},
+	nonAckedMoves{}
 {
 	// Set this pawn to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
 	PrimaryActorTick.bCanEverTick = true;
@@ -36,7 +37,7 @@ APlayerCharacter::APlayerCharacter() :
 		NetworkInfoWidgetComponent->SetWidgetClass(netInfoWidgetObj.Class);
 	}
 	NetworkInfoWidgetComponent->SetupAttachment(RootComponent);
-	NetworkInfoWidgetComponent->SetWidgetSpace(EWidgetSpace::World);
+	NetworkInfoWidgetComponent->SetWidgetSpace(EWidgetSpace::Screen);
 	NetworkInfoWidgetComponent->SetVisibility(true);
 
 	SetReplicates(true);
@@ -94,7 +95,7 @@ void APlayerCharacter::Tick(float DeltaTime)
 			currentMove.moveID = nextMoveId++;
 			ServerMove(currentMove);
 			ApplyMovement(currentMove);
-			savedMoves.push(currentMove);
+			nonAckedMoves.push(currentMove);
 
 			if (widget)
 			{
@@ -104,6 +105,72 @@ void APlayerCharacter::Tick(float DeltaTime)
 	}
 	else if (GetLocalRole() == ROLE_Authority)
 	{
+		serverUpdateCounter += DeltaTime;
+		if (serverUpdateCounter >= 0.1f)
+		{
+			FServerAck ack;
+			if (!serverMovesToApply.empty())
+			{
+				FPlayerMove lastMove;
+				float forwardSpeed = 0;
+				float rightSpeed = 0;
+				[[maybe_unused]] std::size_t t = serverMovesToApply.size();
+				
+				while (!serverMovesToApply.empty())
+				{
+					lastMove = serverMovesToApply.front();
+					ApplyMovement(lastMove);
+					serverMovesToApply.pop();
+
+					if (lastMove.forwardAxis != 0.f)
+					{
+						forwardSpeed += lastMove.forwardAxis;
+					}
+					else if (lastMove.rightAxis)
+					{
+						rightSpeed += lastMove.rightAxis;
+					}
+				}
+
+				ack.moveID = lastMove.moveID;
+				ack.playerLocation = GetActorLocation();
+				ack.playerRotation = lastMove.playerRotation;
+				ack.playerForwardSpeed = (forwardSpeed * MovementSpeed) / 0.1f;
+				ack.playerRightSpeed = (rightSpeed * MovementSpeed) / 0.1f;
+			}
+			else
+			{
+				ack.moveID = 0;
+				ack.playerLocation = GetActorLocation();
+				ack.playerRotation = GetActorRotation().Yaw;
+				ack.playerForwardSpeed = 0.f;
+				ack.playerRightSpeed = 0.f;
+				
+			}
+			MulticastReconcileMove(ack);
+			serverUpdateCounter = 0.f;
+		}
+	}
+	else if (GetLocalRole() == ROLE_SimulatedProxy)
+	{
+		SetActorRotation(FRotator{ 0.f, simulatedRotation, 0.f });
+		
+		FVector NewLocation = GetActorLocation();
+
+		if (simulatedForwardSpeed != 0.f)
+		{
+			FVector ForwardVector = GetActorForwardVector();
+			NewLocation += (ForwardVector * simulatedForwardSpeed * DeltaTime);
+		}
+
+		if (simulatedRightSpeed != 0.f)
+		{
+			FVector RightVector = GetActorRightVector();
+			NewLocation += (RightVector * simulatedRightSpeed * DeltaTime);
+		}
+
+		GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Red, FString::Printf(TEXT("Simulated Forward Speed At this moment: %f"), simulatedForwardSpeed));
+		SetActorLocation(NewLocation);
 	}
 }
 
@@ -220,12 +287,7 @@ bool APlayerCharacter::ServerMove_Validate(FPlayerMove input)
 
 void APlayerCharacter::ServerMove_Implementation(FPlayerMove input)
 {
-	ApplyMovement(input);
-
-	FServerAck ack;
-	ack.moveID = input.moveID;
-	ack.playerLocation = GetActorLocation();
-	MulticastReconcileMove(ack);
+	serverMovesToApply.push(input);
 }
 
 void APlayerCharacter::MulticastReconcileMove_Implementation(FServerAck ack)
@@ -233,34 +295,41 @@ void APlayerCharacter::MulticastReconcileMove_Implementation(FServerAck ack)
 	auto role = GetLocalRole();
 	if (role == ROLE_AutonomousProxy)
 	{
-		uint32 ackedID = 0;
-		while (ack.moveID != ackedID)
+		if (ack.playerForwardSpeed != 0.f || ack.playerRightSpeed != 0.f)
 		{
-			ackedID = savedMoves.front().moveID;
-			savedMoves.pop();
-		}
+			uint32 ackedID = 0;
+			while (ack.moveID != ackedID)
+			{
+				ackedID = nonAckedMoves.front().moveID;
+				nonAckedMoves.pop();
+			}
 
-		SetActorLocation(ack.playerLocation);
-		float cachedLookAt = GetActorRotation().Yaw;
+			SetActorLocation(ack.playerLocation);
+			float cachedLookAt = GetActorRotation().Yaw;
 
-		std::queue<FPlayerMove> tempQueue {savedMoves};
-		while (!tempQueue.empty())
-		{
-			ApplyMovement(tempQueue.front());
-			tempQueue.pop();
-		}
-		SetActorRotation(FRotator{ 0.f, cachedLookAt, 0.f });
+			std::queue<FPlayerMove> tempQueue {nonAckedMoves};
+			while (!tempQueue.empty())
+			{
+				ApplyMovement(tempQueue.front());
+				tempQueue.pop();
+			}
+			SetActorRotation(FRotator{ 0.f, cachedLookAt, 0.f });
 
-		UNetInfoWidget* widget = Cast<UNetInfoWidget>(NetworkInfoWidgetComponent->GetWidget());
-		if (widget)
-		{
-			widget->UpdateServerInfo(ack.playerLocation);
-			widget->UpdateAckedMoves(ack.moveID);
+			UNetInfoWidget* widget = Cast<UNetInfoWidget>(NetworkInfoWidgetComponent->GetWidget());
+			if (widget)
+			{
+				widget->UpdateServerInfo(ack.playerLocation);
+				widget->UpdateAckedMoves(ack.moveID);
+			}
 		}
 	}
 	else if (role == ROLE_SimulatedProxy)
 	{
 		SetActorLocation(ack.playerLocation);
+		simulatedRotation = ack.playerRotation;
+		simulatedForwardSpeed = ack.playerForwardSpeed;
+		simulatedRightSpeed = ack.playerRightSpeed;
+		simulateMovement = true;
 	}
 
 }
