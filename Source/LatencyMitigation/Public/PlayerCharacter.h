@@ -126,11 +126,13 @@ private:
 	float forwardAxis = 0.f;
 	float rightAxis = 0.f;
 
+	FVector oldestServerPosition{};
+	std::queue<FVector> serverPositionsToSimulate;
 	float simulatedRotation = 0.f;
 	float simulatedForwardSpeed = 0.f;
 	float simulatedRightSpeed = 0.f;
-	bool simulateMovement = false;
 	float simulatedUpdateCounter = 0.f;
+	bool startSimulateMovement = false;
 
 	uint32 nextMoveId = 1;
 	

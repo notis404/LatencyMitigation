@@ -3,7 +3,8 @@
 // Sets default values
 APlayerCharacter::APlayerCharacter() :
 	serverMovesToApply{},
-	nonAckedMoves{}
+	nonAckedMoves{},
+	serverPositionsToSimulate{}
 {
 	// Set this pawn to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
 	PrimaryActorTick.bCanEverTick = true;
@@ -153,24 +154,23 @@ void APlayerCharacter::Tick(float DeltaTime)
 	}
 	else if (GetLocalRole() == ROLE_SimulatedProxy)
 	{
-		SetActorRotation(FRotator{ 0.f, simulatedRotation, 0.f });
-		
-		FVector NewLocation = GetActorLocation();
-
-		if (simulatedForwardSpeed != 0.f)
+		if (startSimulateMovement)
 		{
-			FVector ForwardVector = GetActorForwardVector();
-			NewLocation += (ForwardVector * simulatedForwardSpeed * DeltaTime);
-		}
+			if (!serverPositionsToSimulate.empty())
+			{
+				simulatedUpdateCounter += DeltaTime;
+				FVector NewLocation = FMath::Lerp(oldestServerPosition, serverPositionsToSimulate.front(), simulatedUpdateCounter / 0.1f);
 
-		if (simulatedRightSpeed != 0.f)
-		{
-			FVector RightVector = GetActorRightVector();
-			NewLocation += (RightVector * simulatedRightSpeed * DeltaTime);
-		}
+				if (simulatedUpdateCounter > 0.1f)
+				{
+					oldestServerPosition = serverPositionsToSimulate.front();
+					serverPositionsToSimulate.pop();
+					simulatedUpdateCounter = 0.f;
+				}
 
-		GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Red, FString::Printf(TEXT("Simulated Forward Speed At this moment: %f"), simulatedForwardSpeed));
-		SetActorLocation(NewLocation);
+				SetActorLocation(NewLocation);
+			}
+		}
 	}
 }
 
@@ -325,11 +325,13 @@ void APlayerCharacter::MulticastReconcileMove_Implementation(FServerAck ack)
 	}
 	else if (role == ROLE_SimulatedProxy)
 	{
-		SetActorLocation(ack.playerLocation);
-		simulatedRotation = ack.playerRotation;
-		simulatedForwardSpeed = ack.playerForwardSpeed;
-		simulatedRightSpeed = ack.playerRightSpeed;
-		simulateMovement = true;
+		serverPositionsToSimulate.push(ack.playerLocation);
+		if (!startSimulateMovement && serverPositionsToSimulate.size() > 2)
+		{
+			oldestServerPosition = serverPositionsToSimulate.front();
+			serverPositionsToSimulate.pop();
+			startSimulateMovement = true;
+		}
 	}
 
 }
