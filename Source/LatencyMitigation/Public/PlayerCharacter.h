@@ -76,10 +76,12 @@ public:
 	// Called to bind functionality to input
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 
+	// Player Actions
 	void MoveForward(float Axis);
 	void MoveRight(float Axis);
 	void Turn(float Axis);
 	void LookUp(float Axis);
+	void Fire();
 
 	void GetNetworkEmulationSettings();
 
@@ -99,12 +101,30 @@ public:
 
 	void SetPlayerColor(const FLinearColor& newColor);
 
+	UFUNCTION(BlueprintCallable, BlueprintImplementableEvent, Category = "NetInfo")
+		void UpdateWidget_ClientInfo(const FVector& clientPosition);
+	UFUNCTION(BlueprintCallable, BlueprintImplementableEvent, Category = "NetInfo")
+		void UpdateWidget_SentMoves(int64 numSent);
+	UFUNCTION(BlueprintCallable, BlueprintImplementableEvent, Category = "NetInfo")
+		void UpdateWidget_AckedMoves(int64 numAcked);
+	UFUNCTION(BlueprintCallable, BlueprintImplementableEvent, Category = "NetInfo")
+		void UpdateWidget_ServerInfo(const FVector& serverPosition);
+
+	UFUNCTION(BlueprintImplementableEvent, Category = "HitWidget")
+		void UpdateWidget_Hit();
+	
+
 	UPROPERTY(EditAnywhere, Category = "Movement")
 		float MovementSpeed = 5.0f;
 	UPROPERTY(EditAnywhere, Category = "Movement")
 		float TurnSpeed = 1.0f;
 	UPROPERTY(ReplicatedUsing = OnRep_PlayerColor)
 		FLinearColor PlayerColor = FLinearColor::Red;
+
+	UPROPERTY(EditAnywhere, Category = "Shooting")
+		float ShotRange = 5.0f;
+	UPROPERTY(EditAnywhere, Category = "Shooting")
+		bool DrawDebug = false;
 
 	UPROPERTY(EditAnywhere)
 		UStaticMeshComponent* PlayerMesh;

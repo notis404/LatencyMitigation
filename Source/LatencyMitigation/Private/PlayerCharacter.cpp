@@ -31,16 +31,7 @@ APlayerCharacter::APlayerCharacter() :
 	Collider->SetCapsuleSize(25.0f, 50.0f);
 	Collider->SetRelativeLocation(FVector(0.f, 0.f, 50.0f));
 
-	NetworkInfoWidgetComponent = CreateDefaultSubobject<UWidgetComponent>("NetInfoWidget");
-	static ConstructorHelpers::FClassFinder<UNetInfoWidget> netInfoWidgetObj(TEXT("/Game/Blueprints/NetworkInfo"));
-	if (netInfoWidgetObj.Succeeded())
-	{
-		NetworkInfoWidgetComponent->SetWidgetClass(netInfoWidgetObj.Class);
-	}
-	NetworkInfoWidgetComponent->SetupAttachment(RootComponent);
-	NetworkInfoWidgetComponent->SetWidgetSpace(EWidgetSpace::Screen);
-	NetworkInfoWidgetComponent->SetVisibility(true);
-
+	
 	SetReplicates(true);
 	SetReplicateMovement(false);
 }
@@ -51,14 +42,11 @@ void APlayerCharacter::BeginPlay()
 	Super::BeginPlay();
 	if (GetLocalRole() == ROLE_AutonomousProxy)
 	{
-		NetworkInfoWidgetComponent->GetWidget()->AddToViewport();
-		UNetInfoWidget* widget = Cast<UNetInfoWidget>(NetworkInfoWidgetComponent->GetWidget());
-		if (widget)
-		{
-			widget->UpdateClientInfo(GetActorLocation());
-		}
-		GetNetworkEmulationSettings();
+		UpdateWidget_ClientInfo(GetActorLocation());
 	}
+
+	GetNetworkEmulationSettings();
+	
 }
 
 // Called every frame
@@ -68,11 +56,9 @@ void APlayerCharacter::Tick(float DeltaTime)
 
 	if (GetLocalRole() == ROLE_AutonomousProxy)
 	{
-		UNetInfoWidget* widget = Cast<UNetInfoWidget>(NetworkInfoWidgetComponent->GetWidget());
-		if (widget)
-		{
-			widget->UpdateClientInfo(GetActorLocation());
-		}
+		
+		UpdateWidget_ClientInfo(GetActorLocation());
+		
 
 		if (bMovementToSend)
 		{
@@ -98,10 +84,9 @@ void APlayerCharacter::Tick(float DeltaTime)
 			ApplyMovement(currentMove);
 			nonAckedMoves.push(currentMove);
 
-			if (widget)
-			{
-				widget->UpdateSentMoves(currentMove.moveID);
-			}
+
+			UpdateWidget_SentMoves(currentMove.moveID);
+			
 		}
 	}
 	else if (GetLocalRole() == ROLE_Authority)
@@ -183,11 +168,12 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 	PlayerInputComponent->BindAxis("MoveRight", this, &APlayerCharacter::MoveRight);
 	PlayerInputComponent->BindAxis("Turn", this, &APlayerCharacter::Turn);
 	PlayerInputComponent->BindAxis("LookUp", this, &APlayerCharacter::LookUp);
+	PlayerInputComponent->BindAction("Fire", IE_Pressed, this, &APlayerCharacter::Fire);
 }
 
 void APlayerCharacter::GetNetworkEmulationSettings()
 {
-	APlayerController* PlayerController = Cast<APlayerController>(GetController());
+	APlayerController* PlayerController = GetController<APlayerController>();
 
 	if (PlayerController)
 	{
@@ -270,6 +256,51 @@ void APlayerCharacter::LookUp(float Axis)
 	PlayerCamera->AddLocalRotation(FRotator{ TurnSpeed * Axis, 0.f, 0.f });
 }
 
+void APlayerCharacter::Fire()
+{
+
+	APlayerController* PlayerController = GetController<APlayerController>();
+
+	int32 ViewportSizeX, ViewportSizeY;
+	PlayerController->GetViewportSize(ViewportSizeX, ViewportSizeY);
+
+	FVector StartVector;
+	FVector WorldDirection;
+
+	PlayerController->DeprojectScreenPositionToWorld(ViewportSizeX / 2.0f, ViewportSizeY / 2.0f, StartVector, WorldDirection);
+		
+
+	FVector PlayerRotation = GetActorRotation().Vector();
+	FVector CameraRotation = PlayerCamera->GetComponentRotation().Vector();
+
+	FVector EndVector = StartVector + (WorldDirection * ShotRange);
+
+	FHitResult hitResult;
+	FCollisionQueryParams Params;
+	Params.AddIgnoredActor(this);
+
+
+	if (GetWorld()->LineTraceSingleByChannel(hitResult, StartVector, EndVector, ECC_Visibility, Params))
+	{
+		AActor* hitActor = hitResult.GetActor();
+		if (hitActor)
+		{
+			FString ActorName = hitActor->GetName();
+			UE_LOG(LogTemp, Warning, TEXT("Hit Actor: %s"), *ActorName);
+			UpdateWidget_Hit();
+		}
+		
+		if (DrawDebug)
+		{
+			DrawDebugLine(GetWorld(), StartVector, hitResult.ImpactPoint, FColor::Green, false, 2.0f, 0, 1.0f);
+		}
+	}
+	else if (DrawDebug)
+	{
+		DrawDebugLine(GetWorld(), StartVector, EndVector, FColor::Red, false, 2.0f, 0, 1.0f);
+	}
+}
+
 void APlayerCharacter::OnRep_PlayerColor()
 {
 	auto oldMaterial = PlayerMesh->GetMaterial(0);
@@ -315,12 +346,9 @@ void APlayerCharacter::MulticastReconcileMove_Implementation(FServerAck ack)
 			}
 			SetActorRotation(FRotator{ 0.f, cachedLookAt, 0.f });
 
-			UNetInfoWidget* widget = Cast<UNetInfoWidget>(NetworkInfoWidgetComponent->GetWidget());
-			if (widget)
-			{
-				widget->UpdateServerInfo(ack.playerLocation);
-				widget->UpdateAckedMoves(ack.moveID);
-			}
+
+			UpdateWidget_ServerInfo(ack.playerLocation);
+			UpdateWidget_AckedMoves(ack.moveID);
 		}
 	}
 	else if (role == ROLE_SimulatedProxy)
