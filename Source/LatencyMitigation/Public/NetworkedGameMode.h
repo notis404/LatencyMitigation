@@ -21,6 +21,7 @@ public:
 
     // Override the function to handle starting a new player
     virtual void PostLogin(APlayerController* NewPlayer) override;
+    TArray<APlayerController*> playersList {};
 private:
-    int32 playersConnected = 0;
+    int8 playersConnected = 0;
 };

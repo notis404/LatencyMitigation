@@ -12,6 +12,9 @@ void ANetworkedGameMode::PostLogin(APlayerController* NewPlayer)
 
 	if (playerPawn)
 	{
-		playerPawn->SetPlayerColor(DefaultPlayerColors[playersConnected++]);
+		playerPawn->SetPlayerColor(DefaultPlayerColors[playersConnected]);
+		playerPawn->SetPlayerId(playersConnected);
+		playersConnected++;
 	}
+	playersList.Add(NewPlayer);
 }
