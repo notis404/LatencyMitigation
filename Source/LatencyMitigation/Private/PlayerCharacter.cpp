@@ -54,11 +54,36 @@ void APlayerCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
+	if (dummy)
+	{
+		timeSinceDummyInput += DeltaTime;
+		dummyMovementTime += DeltaTime;
+		if (timeSinceDummyInput >= DummyInputRate)
+		{
+			if (dummyMovementTime >= TotalDummyMoveTime)
+			{
+				movingRight = movingRight ? false : true;
+				dummyMovementTime = 0.f;
+			}
+
+			if (movingRight)
+			{
+				MoveRight(1.0f);
+			}
+			else
+			{
+				MoveRight(-1.0f);
+			}
+
+			timeSinceDummyInput = 0.f;
+		}
+	}
+
 	if (GetLocalRole() == ROLE_AutonomousProxy)
 	{
-		
+
 		UpdateWidget_ClientInfo(GetActorLocation());
-		
+
 
 		if (bMovementToSend)
 		{
@@ -86,7 +111,7 @@ void APlayerCharacter::Tick(float DeltaTime)
 
 
 			UpdateWidget_SentMoves(currentMove.moveID);
-			
+
 		}
 	}
 	else if (GetLocalRole() == ROLE_Authority)
@@ -101,7 +126,7 @@ void APlayerCharacter::Tick(float DeltaTime)
 				float forwardSpeed = 0;
 				float rightSpeed = 0;
 				[[maybe_unused]] std::size_t t = serverMovesToApply.size();
-				
+
 				while (!serverMovesToApply.empty())
 				{
 					lastMove = serverMovesToApply.front();
@@ -131,7 +156,7 @@ void APlayerCharacter::Tick(float DeltaTime)
 				ack.playerRotation = GetActorRotation().Yaw;
 				ack.playerForwardSpeed = 0.f;
 				ack.playerRightSpeed = 0.f;
-				
+
 			}
 			MulticastReconcileMove(ack);
 			serverUpdateCounter = 0.f;
@@ -157,6 +182,7 @@ void APlayerCharacter::Tick(float DeltaTime)
 			}
 		}
 	}
+	
 }
 
 // Called to bind functionality to input
@@ -169,6 +195,7 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 	PlayerInputComponent->BindAxis("Turn", this, &APlayerCharacter::Turn);
 	PlayerInputComponent->BindAxis("LookUp", this, &APlayerCharacter::LookUp);
 	PlayerInputComponent->BindAction("Fire", IE_Pressed, this, &APlayerCharacter::Fire);
+	PlayerInputComponent->BindAction("Dummy", IE_Pressed, this, &APlayerCharacter::ToggleDummy);
 }
 
 void APlayerCharacter::GetNetworkEmulationSettings()
@@ -248,7 +275,7 @@ void APlayerCharacter::MoveRight(float Axis)
 
 void APlayerCharacter::Turn(float Axis)
 {
-	AddActorLocalRotation(FRotator{0.f, TurnSpeed * Axis, 0.f});
+	AddActorLocalRotation(FRotator{ 0.f, TurnSpeed * Axis, 0.f });
 }
 
 void APlayerCharacter::LookUp(float Axis)
@@ -258,22 +285,17 @@ void APlayerCharacter::LookUp(float Axis)
 
 void APlayerCharacter::Fire()
 {
-
 	APlayerController* PlayerController = GetController<APlayerController>();
 
 	int32 ViewportSizeX, ViewportSizeY;
 	PlayerController->GetViewportSize(ViewportSizeX, ViewportSizeY);
 
 	FVector StartVector;
-	FVector WorldDirection;
+	FVector LookAtDirection;
 
-	PlayerController->DeprojectScreenPositionToWorld(ViewportSizeX / 2.0f, ViewportSizeY / 2.0f, StartVector, WorldDirection);
-		
+	PlayerController->DeprojectScreenPositionToWorld(ViewportSizeX / 2.0f, ViewportSizeY / 2.0f, StartVector, LookAtDirection);
 
-	FVector PlayerRotation = GetActorRotation().Vector();
-	FVector CameraRotation = PlayerCamera->GetComponentRotation().Vector();
-
-	FVector EndVector = StartVector + (WorldDirection * ShotRange);
+	FVector EndVector = StartVector + (LookAtDirection * ShotRange);
 
 	FHitResult hitResult;
 	FCollisionQueryParams Params;
@@ -299,6 +321,11 @@ void APlayerCharacter::Fire()
 	{
 		DrawDebugLine(GetWorld(), StartVector, EndVector, FColor::Red, false, 2.0f, 0, 1.0f);
 	}
+}
+
+void APlayerCharacter::ToggleDummy()
+{
+	dummy = dummy ? false : true;
 }
 
 void APlayerCharacter::OnRep_PlayerColor()

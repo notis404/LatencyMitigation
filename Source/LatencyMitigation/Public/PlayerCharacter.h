@@ -82,6 +82,7 @@ public:
 	void Turn(float Axis);
 	void LookUp(float Axis);
 	void Fire();
+	void ToggleDummy();
 
 	void GetNetworkEmulationSettings();
 
@@ -126,6 +127,11 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Shooting")
 		bool DrawDebug = false;
 
+	UPROPERTY(EditAnywhere, Category = "Dummy Player")
+		float TotalDummyMoveTime = 5.0f;
+	UPROPERTY(EditAnywhere, Category = "Dummy Player")
+		float DummyInputRate = 0.1f;
+
 	UPROPERTY(EditAnywhere)
 		UStaticMeshComponent* PlayerMesh;
 
@@ -160,4 +166,9 @@ private:
 	std::queue<FPlayerMove> nonAckedMoves;
 
 	float serverUpdateCounter = 0.f;
+
+	bool dummy = false;
+	float dummyMovementTime = 0.f;
+	float timeSinceDummyInput = 0.f;
+	bool movingRight = true;
 };
