@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
 #include "PlayerCharacter.h"
+#include "NetworkedPlayerController.h"
 #include "NetworkedGameMode.generated.h"
 
 /**

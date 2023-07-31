@@ -13,5 +13,5 @@ UCLASS()
 class LATENCYMITIGATION_API ANetworkedPlayerController : public APlayerController
 {
 	GENERATED_BODY()
-	
+
 };

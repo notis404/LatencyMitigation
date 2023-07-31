@@ -37,7 +37,7 @@ struct FPlayerMove
 };
 
 USTRUCT()
-struct FServerAck
+struct FServerMoveAck
 {
 	GENERATED_BODY();
 
@@ -51,16 +51,41 @@ struct FServerAck
 	float playerRotation = 0.f;
 
 	UPROPERTY();
-	float playerForwardSpeed = 0.f;
-	
+	float lookAtRotation = 0.f;
+};
+
+USTRUCT()
+struct FServerFireAck
+{
+	GENERATED_BODY();
+public:
 	UPROPERTY();
-	float playerRightSpeed = 0.f;
+	bool hitPlayer = false;
+
+	UPROPERTY();
+	FVector StartRay{};
+
+	UPROPERTY();
+	FVector EndRay{};
+};
+
+USTRUCT()
+struct FServerDrawDebug
+{
+	GENERATED_BODY();
+public:
+	UPROPERTY();
+	FVector OtherPlayerLocation {};
+
+	UPROPERTY();
+	FColor DrawColor = FColor::Red;
 };
 
 UCLASS()
 class APlayerCharacter : public APawn
 {
 	GENERATED_BODY()
+
 public:
 	// Sets default values for this pawn's properties
 	APlayerCharacter();
@@ -86,49 +111,81 @@ public:
 
 	void GetNetworkEmulationSettings();
 
-	UFUNCTION(Server, WithValidation, Unreliable)
+	UFUNCTION(Server, Unreliable)
 		void ServerMove(FPlayerMove input);
+	
+	UFUNCTION(Server, Unreliable)
+		void ServerFire();
+
+	UFUNCTION(Client, Unreliable)
+	virtual void ClientFireResponse(FServerFireAck ack);
+
+	UFUNCTION(Client, Unreliable)
+	virtual void ClientHitResponse();
+
+	UFUNCTION(Client, Unreliable)
+	virtual void ClientDebugResponse(FServerDrawDebug debugInfo);
 
 	UFUNCTION(NetMulticast, Unreliable)
-		void MulticastReconcileMove(FServerAck ack);
+		void MulticastReconcileMove(FServerMoveAck ack);
 
 	UFUNCTION()
 		void OnRep_PlayerColor();
 	
-	virtual bool ServerMove_Validate(FPlayerMove input);
 	virtual void ServerMove_Implementation(FPlayerMove input);
 
-	virtual void MulticastReconcileMove_Implementation(FServerAck ack);
+	virtual void ServerFire_Implementation();
+
+	virtual void ClientFireResponse_Implementation(FServerFireAck ack);
+
+	virtual void ClientHitResponse_Implementation();
+
+	virtual void ClientDebugResponse_Implementation(FServerDrawDebug debugInfo);
+
+	virtual void MulticastReconcileMove_Implementation(FServerMoveAck ack);
 
 	void SetPlayerColor(const FLinearColor& newColor);
 
 	UFUNCTION(BlueprintCallable, BlueprintImplementableEvent, Category = "NetInfo")
 		void UpdateWidget_ClientInfo(const FVector& clientPosition);
+
 	UFUNCTION(BlueprintCallable, BlueprintImplementableEvent, Category = "NetInfo")
 		void UpdateWidget_SentMoves(int64 numSent);
+
 	UFUNCTION(BlueprintCallable, BlueprintImplementableEvent, Category = "NetInfo")
 		void UpdateWidget_AckedMoves(int64 numAcked);
+
 	UFUNCTION(BlueprintCallable, BlueprintImplementableEvent, Category = "NetInfo")
 		void UpdateWidget_ServerInfo(const FVector& serverPosition);
 
 	UFUNCTION(BlueprintImplementableEvent, Category = "HitWidget")
-		void UpdateWidget_Hit();
+		void UpdateWidget_LandedHit();
+
+	UFUNCTION(BlueprintImplementableEvent, Category = "HitWidget")
+		void UpdateWidget_GotHit();
 	
 
 	UPROPERTY(EditAnywhere, Category = "Movement")
 		float MovementSpeed = 5.0f;
+
 	UPROPERTY(EditAnywhere, Category = "Movement")
 		float TurnSpeed = 1.0f;
+
+
 	UPROPERTY(ReplicatedUsing = OnRep_PlayerColor)
 		FLinearColor PlayerColor = FLinearColor::Red;
 
+
 	UPROPERTY(EditAnywhere, Category = "Shooting")
-		float ShotRange = 5.0f;
+		float ShotRange = 300.0f;
+
 	UPROPERTY(EditAnywhere, Category = "Shooting")
 		bool DrawDebug = false;
 
+
 	UPROPERTY(EditAnywhere, Category = "Dummy Player")
 		float TotalDummyMoveTime = 5.0f;
+
 	UPROPERTY(EditAnywhere, Category = "Dummy Player")
 		float DummyInputRate = 0.1f;
 
@@ -140,17 +197,20 @@ public:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Collision")
 		UCapsuleComponent* Collider;
-
-	UPROPERTY(EditAnywhere)
-		UWidgetComponent* NetworkInfoWidgetComponent;
 private:
 	void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 	void ApplyMovement(const FPlayerMove& move);
+	void DrawCollider(const FVector& colliderPosition, const FColor& color = FColor::Red);
+
 	bool bMoveOnForwardAxis = false;
 	bool bMoveOnRightAxis = false;
+	bool bMoveLookAt = false;
+	bool bMovePlayerRot = false;
 	bool bMovementToSend = false;
 	float forwardAxis = 0.f;
 	float rightAxis = 0.f;
+	float lookAtAxis = 0.f;
+	float playerRotAxis = 0.f;
 
 	FVector oldestServerPosition{};
 	std::queue<FVector> serverPositionsToSimulate;
@@ -171,4 +231,7 @@ private:
 	float dummyMovementTime = 0.f;
 	float timeSinceDummyInput = 0.f;
 	bool movingRight = true;
+
+	float halfHeight = 0.f;
+	float radius = 0.f;
 };
