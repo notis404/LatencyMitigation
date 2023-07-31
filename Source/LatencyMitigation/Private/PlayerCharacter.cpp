@@ -1,6 +1,6 @@
 #include "PlayerCharacter.h"
-#include "NetworkedGameMode.h"
 #include "NetworkedPlayerController.h"
+	#include "GameFramework/GameStateBase.h"
 
 // Sets default values
 APlayerCharacter::APlayerCharacter() :
@@ -44,12 +44,9 @@ void APlayerCharacter::BeginPlay()
 	if (GetLocalRole() == ROLE_AutonomousProxy)
 	{
 		UpdateWidget_ClientInfo(GetActorLocation());
-
 	}
-	
 	Collider->GetScaledCapsuleSize(radius, halfHeight);
 	GetNetworkEmulationSettings();
-	
 }
 
 // Called every frame
@@ -115,6 +112,8 @@ void APlayerCharacter::Tick(float DeltaTime)
 				playerRotAxis = 0.f;
 			}
 
+			auto gameState = UGameplayStatics::GetGameState(GetWorld());
+			currentMove.timestamp = gameState->GetServerWorldTimeSeconds();
 			currentMove.moveID = nextMoveId++;
 			ServerMove(currentMove);
 			ApplyMovement(currentMove);
@@ -130,31 +129,25 @@ void APlayerCharacter::Tick(float DeltaTime)
 		serverUpdateCounter += DeltaTime;
 		if (serverUpdateCounter >= 0.1f)
 		{
-			FServerMoveAck ack;
-			if (!serverMovesToApply.empty())
+			if (!freshPlayerInput)
 			{
-				FPlayerMove lastMove;
-				while (!serverMovesToApply.empty())
+				nextServerUpdate.moveID = 0;
+				nextServerUpdate.playerLocation = GetActorLocation();
+				nextServerUpdate.playerRotation = GetActorRotation().Yaw;
+				nextServerUpdate.lookAtRotation = PlayerCamera->GetComponentRotation().Pitch;
+				if (rollbackPositions.size() < numRollbackPositions)
 				{
-					lastMove = serverMovesToApply.front();
-					ApplyMovement(lastMove);
-					serverMovesToApply.pop();
+					rollbackPositions.push_back(nextServerUpdate);
 				}
-
-				ack.moveID = lastMove.moveID;
-				ack.playerLocation = GetActorLocation();
-				ack.playerRotation = GetActorRotation().Yaw;
-				ack.lookAtRotation = PlayerCamera->GetComponentRotation().Pitch;
+				else
+				{
+					rollbackPositions.pop_front();
+					rollbackPositions.push_back(nextServerUpdate);
+				}
 			}
-			else
-			{
-				ack.moveID = 0;
-				ack.playerLocation = GetActorLocation();
-				ack.playerRotation = GetActorRotation().Yaw;
-				ack.lookAtRotation = PlayerCamera->GetComponentRotation().Pitch;
-			}
-			MulticastReconcileMove(ack);
+			MulticastReconcileMove(nextServerUpdate);
 			serverUpdateCounter = 0.f;
+			freshPlayerInput = false;
 		}
 	}
 	else if (GetLocalRole() == ROLE_SimulatedProxy)
@@ -262,6 +255,45 @@ void APlayerCharacter::DrawCollider(const FVector& colliderPosition, const FColo
 	DrawDebugCapsule(GetWorld(), CapsuleCenterWorld, halfHeight, radius, GetActorRotation().Quaternion(), color, false, 1.0f, 0, 1.0f);
 }
 
+void APlayerCharacter::RewindPlayerPosition(double timestamp)
+{
+	if (GetLocalRole() == ROLE_Authority)
+	{
+		std::list<FServerMoveAck>::iterator prev;
+		for (auto it = rollbackPositions.begin(); it != rollbackPositions.end();  ++it)
+		{
+			if (timestamp > it->timestamp)
+			{
+				continue;
+			}
+			else
+			{
+				prev = --it;
+				it++;
+
+				auto olderTimeStamp = prev->timestamp;
+				auto newerTimeStamp = it->timestamp;
+
+				auto alpha = (timestamp - prev->timestamp) / (it->timestamp - prev->timestamp);
+				cachedRollbackPosition = GetActorLocation();
+				SetActorLocation(FMath::Lerp(prev->playerLocation, it->playerLocation, alpha));
+				rolledBack = true;
+				break;
+			}
+		}
+	}
+	
+}
+
+void APlayerCharacter::RestorePlayerPosition()
+{
+	if (GetLocalRole() == ROLE_Authority && rolledBack)
+	{
+		rolledBack = false;
+		SetActorLocation(cachedRollbackPosition);
+	}
+}
+
 
 void APlayerCharacter::MoveForward(float Axis)
 {
@@ -305,7 +337,7 @@ void APlayerCharacter::LookUp(float Axis)
 
 void APlayerCharacter::Fire()
 {
-	ServerFire();
+	ServerFire(UGameplayStatics::GetGameState(GetWorld())->GetServerWorldTimeSeconds());
 	if (DrawDebug)
 	{
 		TArray<AActor*> FoundActors;
@@ -341,10 +373,27 @@ void APlayerCharacter::OnRep_PlayerColor()
 
 void APlayerCharacter::ServerMove_Implementation(FPlayerMove input)
 {
-	serverMovesToApply.push(input);
+	ApplyMovement(input);
+	
+	freshPlayerInput = true;
+	nextServerUpdate.moveID = input.moveID;
+	nextServerUpdate.timestamp = UGameplayStatics::GetGameState(GetWorld())->GetServerWorldTimeSeconds();
+	nextServerUpdate.playerLocation = GetActorLocation();
+	nextServerUpdate.playerRotation = GetActorRotation().Yaw;
+	nextServerUpdate.lookAtRotation = PlayerCamera->GetComponentRotation().Pitch;
+
+	if (rollbackPositions.size() < numRollbackPositions)
+	{
+		rollbackPositions.push_back(nextServerUpdate);
+	}
+	else
+	{
+		rollbackPositions.pop_front();
+		rollbackPositions.push_back(nextServerUpdate);
+	}
 }
 
-void APlayerCharacter::ServerFire_Implementation()
+void APlayerCharacter::ServerFire_Implementation(double timestamp)
 {
 	FVector StartVector = PlayerCamera->GetComponentLocation();
 	FVector EndVector = StartVector + (PlayerCamera->GetComponentRotation().Vector() * ShotRange);
@@ -354,19 +403,43 @@ void APlayerCharacter::ServerFire_Implementation()
 	Params.AddIgnoredActor(this);
 
 	bool hitAnotherPlayer = false;
-	AActor* hitActor = nullptr;
+	
+
+
+	auto playerArray = UGameplayStatics::GetGameState(GetWorld())->PlayerArray;
+	for (auto playerState : playerArray)
+	{
+		auto otherPlayerPawn = Cast<APlayerCharacter>(playerState->GetPawn());
+		if (otherPlayerPawn != this)
+		{
+			otherPlayerPawn->RewindPlayerPosition(timestamp);
+		}
+	}
+
+	APlayerCharacter* hitPlayer = nullptr;
 	if (GetWorld()->LineTraceSingleByChannel(hitResult, StartVector, EndVector, ECC_Visibility, Params))
 	{
-		hitActor = hitResult.GetActor();
+		auto hitActor = hitResult.GetActor();
 		if (hitActor)
 		{
-			APlayerCharacter* hitPlayer = Cast<APlayerCharacter>(hitActor);
+			hitPlayer = Cast<APlayerCharacter>(hitActor);
 			if (hitPlayer)
 			{
 				hitPlayer->ClientHitResponse();
 				hitAnotherPlayer = true;
-				
 			}
+		}
+	}
+
+	FServerDrawDebug debugInfo{};
+	for (auto playerState : playerArray)
+	{
+		auto otherPlayerPawn = Cast<APlayerCharacter>(playerState->GetPawn());
+		if (otherPlayerPawn != this)
+		{
+			debugInfo.OtherPlayerLocation = otherPlayerPawn->GetActorLocation();
+			debugInfo.DrawColor = hitPlayer == otherPlayerPawn ? FColor::Green : FColor::Red;
+			otherPlayerPawn->RestorePlayerPosition();
 		}
 	}
 
@@ -375,19 +448,9 @@ void APlayerCharacter::ServerFire_Implementation()
 	ack.StartRay = StartVector;
 	ack.EndRay = EndVector;
 	ClientFireResponse(ack);
+	ClientDebugResponse(debugInfo);
 
-	TArray<AActor*> FoundActors;
-	UGameplayStatics::GetAllActorsOfClass(GetWorld(), APlayerCharacter::StaticClass(), FoundActors);
-	for (auto foundActor : FoundActors)
-	{
-		if (!(foundActor == this))
-		{
-			FServerDrawDebug debugInfo{};
-			debugInfo.OtherPlayerLocation = foundActor->GetActorLocation();
-			debugInfo.DrawColor = hitActor == foundActor ? FColor::Green : FColor::Red;
-			ClientDebugResponse(debugInfo);
-		}
-	}
+	
 }
 
 void APlayerCharacter::ClientFireResponse_Implementation(FServerFireAck ack)
@@ -433,16 +496,12 @@ void APlayerCharacter::MulticastReconcileMove_Implementation(FServerMoveAck ack)
 			[[maybe_unused]] auto testPlayerRotationPost = GetActorRotation().Yaw;
 			[[maybe_unused]] auto testLookAtRotationPost = PlayerCamera->GetComponentRotation().Pitch;
 
-			//float cachedLookAt = GetActorRotation().Yaw;
-
 			std::queue<FPlayerMove> tempQueue {nonAckedMoves};
 			while (!tempQueue.empty())
 			{
 				ApplyMovement(tempQueue.front());
 				tempQueue.pop();
 			}
-			//SetActorRotation(FRotator{ 0.f, cachedLookAt, 0.f });
-
 
 			UpdateWidget_ServerInfo(ack.playerLocation);
 			UpdateWidget_AckedMoves(ack.moveID);

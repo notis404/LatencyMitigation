@@ -14,6 +14,7 @@
 #include "Engine/NetConnection.h"
 #include "UMG/Public/UMG.h"
 #include <queue>
+#include <list>
 #include "PlayerCharacter.generated.h"
 USTRUCT()
 struct FPlayerMove
@@ -22,6 +23,9 @@ struct FPlayerMove
 
 	UPROPERTY();
 	uint32 moveID = 0;
+
+	UPROPERTY();
+	double timestamp = 0.f;
 
 	UPROPERTY();
 	float forwardAxis = 0.f;
@@ -43,6 +47,9 @@ struct FServerMoveAck
 
 	UPROPERTY();
 	uint32 moveID = 0;
+
+	UPROPERTY();
+	double timestamp = 0.f;
 
 	UPROPERTY();
 	FVector playerLocation{};
@@ -81,6 +88,7 @@ public:
 	FColor DrawColor = FColor::Red;
 };
 
+
 UCLASS()
 class APlayerCharacter : public APawn
 {
@@ -115,7 +123,7 @@ public:
 		void ServerMove(FPlayerMove input);
 	
 	UFUNCTION(Server, Unreliable)
-		void ServerFire();
+		void ServerFire(double timestamp);
 
 	UFUNCTION(Client, Unreliable)
 	virtual void ClientFireResponse(FServerFireAck ack);
@@ -134,7 +142,7 @@ public:
 	
 	virtual void ServerMove_Implementation(FPlayerMove input);
 
-	virtual void ServerFire_Implementation();
+	virtual void ServerFire_Implementation(double timestamp);
 
 	virtual void ClientFireResponse_Implementation(FServerFireAck ack);
 
@@ -171,6 +179,9 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Movement")
 		float TurnSpeed = 1.0f;
 
+	UPROPERTY(EditAnywhere, Category = "Movement")
+		uint32 numRollbackPositions = 10;
+
 
 	UPROPERTY(ReplicatedUsing = OnRep_PlayerColor)
 		FLinearColor PlayerColor = FLinearColor::Red;
@@ -201,6 +212,8 @@ private:
 	void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 	void ApplyMovement(const FPlayerMove& move);
 	void DrawCollider(const FVector& colliderPosition, const FColor& color = FColor::Red);
+	void RewindPlayerPosition(double timestamp);
+	void RestorePlayerPosition();
 
 	bool bMoveOnForwardAxis = false;
 	bool bMoveOnRightAxis = false;
@@ -234,4 +247,10 @@ private:
 
 	float halfHeight = 0.f;
 	float radius = 0.f;
+
+	std::list<FServerMoveAck> rollbackPositions;
+	bool rolledBack = false;
+	FVector cachedRollbackPosition{};
+	FServerMoveAck nextServerUpdate{};
+	bool freshPlayerInput = false;
 };
